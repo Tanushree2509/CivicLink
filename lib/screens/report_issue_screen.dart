@@ -6,9 +6,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../models/department.dart';
-import '../services/firestore_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../utils/department_helper.dart';
 
 class ReportIssueScreen extends StatefulWidget {
   const ReportIssueScreen({super.key});
@@ -20,10 +19,8 @@ class ReportIssueScreen extends StatefulWidget {
 class _ReportIssueScreenState extends State<ReportIssueScreen> {
   final _formKey = GlobalKey<FormState>();
   final ImagePicker _picker = ImagePicker();
-  final FirestoreService _firestoreService = FirestoreService();
   XFile? _image;
-  String? _selectedCategory; // Corrected state variable name
-  Department? _selectedDepartment; // Corrected state variable name
+  String? _selectedCategory;
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _locationController = TextEditingController();
 
@@ -32,7 +29,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   bool _isSubmitting = false;
   String _aiAnalysisResult = '';
   String _detectedIssueType = '';
-  Position? _currentLocation; // Corrected state variable name
+  Position? _currentPosition;
   String _locationAddress = '';
   double _confidenceLevel = 0.0;
 
@@ -41,57 +38,15 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
     'Garbage Overflow',
     'Street Light Not Working',
     'Water Pipeline Leakage',
-    'Damaged Public Bench',
     'Broken Drainage',
-    'Illegal Construction',
     'Road Damage',
-    'Public Toilet Issues',
     'Other'
   ];
 
   @override
   void initState() {
     super.initState();
-    _selectedCategory = _issueTypes.first; // Initialize to avoid null
-  }
-
-  Department _assignToDepartment(String issueType) {
-    switch (issueType.toLowerCase()) {
-      case 'pothole':
-      case 'road damage':
-      case 'road_crack':
-        return Department.roadsAndInfrastructure;
-      case 'garbage overflow':
-      case 'trash':
-      case 'waste':
-        return Department.sanitation;
-      case 'water pipeline leakage':
-      case 'water leak':
-      case 'drainage':
-        return Department.waterAndSewage;
-      case 'street light not working':
-      case 'light issue':
-        return Department.electricity;
-      case 'damaged public bench':
-      case 'public toilet issues':
-        return Department.publicWorks;
-      case 'illegal construction':
-        return Department.planningAndDevelopment;
-      default:
-        return Department.publicWorks;
-    }
-  }
-
-  int _calculatePriority(String issueType, String description) {
-    if (issueType.toLowerCase().contains('emergency') ||
-        description.toLowerCase().contains('urgent') ||
-        description.toLowerCase().contains('danger')) {
-      return 5;
-    } else if (issueType.toLowerCase().contains('water') ||
-        issueType.toLowerCase().contains('electr')) {
-      return 4;
-    }
-    return 3;
+    _selectedCategory = _issueTypes.first;
   }
 
   Future<void> _simulateAIAnalysis() async {
@@ -102,7 +57,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
       _confidenceLevel = 0.0;
     });
 
-    await Future.delayed(Duration(seconds: 2 + (DateTime.now().millisecond % 2)));
+    await Future.delayed(const Duration(seconds: 2));
 
     final imageName = _image?.name.toLowerCase() ?? '';
     final fileSize = 1000000;
@@ -119,203 +74,132 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   }
 
   Map<String, dynamic> _smartImageAnalysis(String imageName, int fileSize) {
-    if (imageName.contains('pothole') ||
-        imageName.contains('pot_hole') ||
-        imageName.contains('road_damage') ||
-        imageName.contains('roadhole') ||
-        imageName.contains('cracked_road') ||
-        imageName.contains('road_crack')) {
+    if (imageName.contains('pothole') || imageName.contains('road')) {
       return {
         'type': 'Pothole',
         'confidence': 0.92,
-        'analysis': '✅ Confirmed: Road Surface Damage\n• Type: Deep pothole\n• Size: ~${(25 + DateTime.now().millisecond % 30)}cm diameter\n• Depth: ~${(8 + DateTime.now().millisecond % 12)}cm\n• Urgency: HIGH - Immediate repair needed\n• Risk: Vehicle damage and safety hazard'
+        'analysis': '✅ Confirmed: Road Surface Damage\n• Type: Deep pothole\n• Urgency: HIGH - Immediate repair needed'
       };
     }
 
-    if (imageName.contains('garbage') ||
-        imageName.contains('trash') ||
-        imageName.contains('waste') ||
-        imageName.contains('rubbish') ||
-        imageName.contains('dump') ||
-        imageName.contains('litter')) {
+    if (imageName.contains('garbage') || imageName.contains('trash')) {
       return {
         'type': 'Garbage Overflow',
         'confidence': 0.88,
-        'analysis': '✅ Confirmed: Waste Management Issue\n• Bin status: Overflowing\n• Waste type: Mixed materials\n• Cleanup urgency: Within 24 hours\n• Health risk: Moderate\n• Recommendation: Immediate cleanup'
+        'analysis': '✅ Confirmed: Waste Management Issue\n• Bin status: Overflowing\n• Cleanup urgency: Within 24 hours'
       };
     }
 
-    if (imageName.contains('water') ||
-        imageName.contains('flood') ||
-        imageName.contains('logging') ||
-        imageName.contains('rain') ||
-        imageName.contains('drain') ||
-        imageName.contains('sewer')) {
-      return {
-        'type': 'Broken Drainage',
-        'confidence': 0.85,
-        'analysis': '✅ Confirmed: Drainage Issue\n• Type: Water logging\n• Depth: ~${(5 + DateTime.now().millisecond % 20)}cm\n• Area affected: ${(10 + DateTime.now().millisecond % 40)} sqm\n• Urgency: HIGH during rainfall\n• Risk: Traffic disruption, health hazard'
-      };
-    }
-
-    if (imageName.contains('light') ||
-        imageName.contains('lamp') ||
-        imageName.contains('pole') ||
-        imageName.contains('streetlight') ||
-        imageName.contains('dark')) {
+    if (imageName.contains('light') || imageName.contains('streetlight')) {
       return {
         'type': 'Street Light Not Working',
         'confidence': 0.82,
-        'analysis': '✅ Confirmed: Lighting Infrastructure Issue\n• Pole condition: Non-functional\n• Issue type: Electrical fault\n• Safety concern: HIGH at night\n• Repair priority: Medium\n• Recommendation: Electrical inspection'
+        'analysis': '✅ Confirmed: Lighting Infrastructure Issue\n• Safety concern: HIGH at night\n• Repair priority: Medium'
       };
     }
 
-    if (imageName.contains('pipe') ||
-        imageName.contains('leak') ||
-        imageName.contains('waterleak') ||
-        imageName.contains('burst')) {
+    if (imageName.contains('water') || imageName.contains('pipe')) {
       return {
         'type': 'Water Pipeline Leakage',
         'confidence': 0.87,
-        'analysis': '✅ Confirmed: Water Infrastructure Issue\n• Leak rate: ~${(3 + DateTime.now().millisecond % 10)}L/min\n• Pipe type: Suspected main line\n• Water wastage: Significant\n• Urgency: HIGH - immediate repair\n• Risk: Road damage, water shortage'
+        'analysis': '✅ Confirmed: Water Infrastructure Issue\n• Urgency: HIGH - immediate repair'
       };
     }
 
-    if (imageName.contains('bench') ||
-        imageName.contains('seat') ||
-        imageName.contains('park') ||
-        imageName.contains('public_seat')) {
+    if (imageName.contains('drain') || imageName.contains('sewer')) {
       return {
-        'type': 'Damaged Public Bench',
-        'confidence': 0.79,
-        'analysis': '✅ Confirmed: Public Furniture Damage\n• Damage type: Structural compromise\n• Safety risk: Moderate\n• Repair needed: Yes\n• Priority: Medium urgency\n• Recommendation: Replacement or repair'
+        'type': 'Broken Drainage',
+        'confidence': 0.85,
+        'analysis': '✅ Confirmed: Drainage Issue\n• Urgency: HIGH during rainfall'
       };
     }
 
-    if (imageName.contains('construct') ||
-        imageName.contains('build') ||
-        imageName.contains('site') ||
-        imageName.contains('illegal')) {
-      return {
-        'type': 'Illegal Construction',
-        'confidence': 0.75,
-        'analysis': '⚠️ Suspected: Unauthorized Construction\n• Verification needed: Yes\n• Documentation: Recommended\n• Authority alert: Required\n• Priority: Investigation needed\n• Risk: Legal violations, safety concerns'
-      };
-    }
-
-    if (imageName.contains('road') ||
-        imageName.contains('street') ||
-        imageName.contains('damage') ||
-        imageName.contains('crack')) {
-      return {
-        'type': 'Road Damage',
-        'confidence': 0.80,
-        'analysis': '✅ Confirmed: Road Infrastructure Issue\n• Damage type: Surface deterioration\n• Extent: Multiple affected areas\n• Resurfacing needed: Yes\n• Urgency: Medium-term repair\n• Risk: Progressive deterioration'
-      };
-    }
-
-    if (fileSize > 1500000) {
-      return {
-        'type': 'Other',
-        'confidence': 0.65,
-        'analysis': '🔍 Complex Scene Detected\n• Multiple elements found\n• Requires manual review\n• Municipal team notified\n• Further analysis recommended\n• Please provide additional details'
-      };
-    }
-
-    final random = DateTime.now().millisecond % _issueTypes.length;
     return {
-      'type': _issueTypes[random],
-      'confidence': 0.6,
-      'analysis': '🔍 Analysis Complete\n• Issue categorized for review\n• Confidence: Moderate\n• Verification recommended\n• Please confirm the issue type'
+      'type': 'Other',
+      'confidence': 0.65,
+      'analysis': '🔍 Analysis Complete\n• Please confirm the issue type'
     };
   }
 
-  Future<void> _getCurrentLocation() async {
+Future<void> _getCurrentLocation() async {
+  setState(() {
+    _isGettingLocation = true;
+  });
+
+  try {
+    // For web demo
+    if (kIsWeb) {
+      await Future.delayed(const Duration(seconds: 1));
+      
+      setState(() {
+        // MIT-WPU, Pune coordinates
+        _locationAddress = 'MIT-WPU, Pune\nKothrud, Pune, Maharashtra';
+        _locationController.text = _locationAddress;
+        _currentPosition = Position(
+          latitude: 18.5074,  // MIT-WPU latitude
+          longitude: 73.8077, // MIT-WPU longitude
+          timestamp: DateTime.now(),
+          accuracy: 0.0,
+          altitude: 0.0,
+          altitudeAccuracy: 0.0,
+          heading: 0.0,
+          headingAccuracy: 0.0,
+          speed: 0.0,
+          speedAccuracy: 0.0,
+        );
+        _isGettingLocation = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Using MIT-WPU, Pune location for demo'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // For mobile devices - keep the real location code
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location permissions are denied')),
+        );
+        setState(() {
+          _isGettingLocation = false;
+        });
+        return;
+      }
+    }
+
+    Position position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.medium,
+    );
+
+    final address = await _simulateReverseGeocoding(position.latitude, position.longitude);
+
     setState(() {
-      _isGettingLocation = true;
+      _currentPosition = position;
+      _locationAddress = address;
+      _locationController.text = address;
+      _isGettingLocation = false;
     });
 
-    try {
-      if (kIsWeb) {
-        await Future.delayed(const Duration(seconds: 1));
-        
-        setState(() {
-          _locationAddress = 'Simulated Location for Web Demo\nLat: 28.6139, Long: 77.2090\nNear City Center';
-          _locationController.text = _locationAddress;
-          _currentLocation = Position(
-            latitude: 28.6139,
-            longitude: 77.2090,
-            timestamp: DateTime.now(),
-            accuracy: 0.0,
-            altitude: 0.0,
-            altitudeAccuracy: 0.0,
-            heading: 0.0,
-            headingAccuracy: 0.0,
-            speed: 0.0,
-            speedAccuracy: 0.0,
-          );
-          _isGettingLocation = false;
-        });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Location simulation enabled for web demo'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Location permissions are denied')),
-          );
-          setState(() {
-            _isGettingLocation = false;
-          });
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location permissions are permanently denied')),
-        );
-        setState(() {
-          _isGettingLocation = false;
-        });
-        return;
-      }
-
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      final address = await _simulateReverseGeocoding(position.latitude, position.longitude);
-
-      setState(() {
-        _currentLocation = position;
-        _locationAddress = address;
-        _locationController.text = address;
-        _isGettingLocation = false;
-      });
-
-    } catch (e) {
-      setState(() {
-        _isGettingLocation = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString()}')),
-      );
-    }
+  } catch (e) {
+    setState(() {
+      _isGettingLocation = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error getting location: $e')),
+    );
   }
+}
 
   Future<String> _simulateReverseGeocoding(double lat, double lng) async {
     await Future.delayed(const Duration(seconds: 1));
-    return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}\nNear City Center, Urban Area';
+    return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}\nNearby area';
   }
 
   Future<void> _takePhoto() async {
@@ -339,7 +223,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error taking photo: ${e.toString()}')),
+        SnackBar(content: Text('Error taking photo: $e')),
       );
     }
   }
@@ -364,84 +248,95 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error selecting image: ${e.toString()}')),
+        SnackBar(content: Text('Error selecting image: $e')),
       );
     }
   }
 
   Future<void> _submitReport() async {
     if (_formKey.currentState!.validate()) {
+      if (_image == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please add a photo of the issue')),
+        );
+        return;
+      }
+
+      if (_currentPosition == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please get your current location')),
+        );
+        return;
+      }
+
       setState(() {
         _isSubmitting = true;
       });
 
       try {
-        final auth = FirebaseAuth.instance;
-        await auth.signInAnonymously();
-
-        String? imageUrl;
-        if (_image != null) {
-          // --- This is the hackathon jugaad ---
-          // Simulate a successful image upload
-          await Future.delayed(const Duration(seconds: 2));
-          imageUrl = 'https://i.imgur.com/8Q9i7z8.jpeg'; // A sample image of garbage
+        final User? user = FirebaseAuth.instance.currentUser;
+        if (user == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please login to submit a report')),
+          );
+          return;
         }
 
-        final collectionName = '${_selectedCategory}_issues';
-        _selectedDepartment = _assignToDepartment(_selectedCategory!);
+        // Upload image to Firebase Storage (simplified for demo)
+        final String imageUrl = 'https://example.com/uploaded-image.jpg';
 
-        final issueData = {
-          'userId': auth.currentUser?.uid,
-          'category': _selectedCategory,
+        // Get the correct department for the category
+        final String category = _selectedCategory ?? 'Other';
+        final String department = DepartmentHelper.getDepartmentForCategory(category);
+
+        // Create report data
+        final reportData = {
+          'userId': user.uid,
+          'category': category,
           'description': _descriptionController.text,
-          'location': {
-            'latitude': _currentLocation?.latitude,
-            'longitude': _currentLocation?.longitude,
-          },
-          'status': 'Submitted',
-          'createdAt': FieldValue.serverTimestamp(),
-          'assignedDepartment': _selectedDepartment!.displayName,
           'imageUrl': imageUrl,
+          'latitude': _currentPosition!.latitude,
+          'longitude': _currentPosition!.longitude,
+          'status': 'Pending',
+          'timestamp': FieldValue.serverTimestamp(),
+          'assignedTo': null,
+          'department': department, // This is the key fix - using display name
+          'priority': _calculatePriority(category, _descriptionController.text),
+          'locationAddress': _locationAddress,
         };
 
-        final bool success = await _firestoreService.saveIssueReport(
-          collectionName,
-          issueData,
+        // Save to Firestore
+        await FirebaseFirestore.instance.collection('reports').add(reportData);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Report submitted successfully!')),
         );
 
-        if (success) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Report submitted successfully!')),
-            );
-            Navigator.of(context).pop();
-          }
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Failed to submit report. Please try again.')),
-            );
-          }
-        }
+        Navigator.pop(context);
+
       } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('An error occurred: $e'),
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error submitting report: $e')),
+        );
       } finally {
-        if (mounted) {
-          setState(() {
-            _isSubmitting = false;
-          });
-        }
+        setState(() {
+          _isSubmitting = false;
+        });
       }
     }
   }
-  
+
+  int _calculatePriority(String issueType, String description) {
+    if (issueType.toLowerCase().contains('emergency') ||
+        description.toLowerCase().contains('urgent')) {
+      return 5;
+    } else if (issueType.toLowerCase().contains('water') ||
+        issueType.toLowerCase().contains('electr')) {
+      return 4;
+    }
+    return 3;
+  }
+
   void _removeImage() {
     setState(() {
       _image = null;
@@ -550,18 +445,6 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
               color: Colors.grey.shade700,
             ),
           ),
-          if (_confidenceLevel < 0.7)
-            Padding(
-              padding: const EdgeInsets.only(top: 8.0),
-              child: Text(
-                'Note: Low confidence, please verify the issue type.',
-                style: GoogleFonts.poppins(
-                  fontSize: 12,
-                  fontStyle: FontStyle.italic,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -573,9 +456,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
       appBar: AppBar(
         title: Text(
           'Report an Issue',
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.bold,
-          ),
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.blue.shade700,
         foregroundColor: Colors.white,
@@ -744,7 +625,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
                       ),
                     ),
                   ),
-                  if (_currentLocation == null)
+                  if (_currentPosition == null)
                     TextButton.icon(
                       onPressed: _getCurrentLocation,
                       icon: Icon(

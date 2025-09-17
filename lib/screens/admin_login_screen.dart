@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'admin_home_screen.dart';
-import '../models/department.dart'; // Import the department model
+import '../models/department.dart';
 
 class AdminLoginScreen extends StatefulWidget {
   const AdminLoginScreen({super.key});
@@ -14,57 +16,71 @@ class AdminLoginScreen extends StatefulWidget {
 class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
   bool _isLoading = false;
   bool _obscurePassword = true;
   Department? _selectedDepartment;
 
-  // Simple admin credentials for demo
-  final Map<String, String> _adminCredentials = {
-    'admin@civiclink.com': 'admin123',
-    'supervisor@civiclink.com': 'super123',
-  };
+Future<void> _loginAsAdmin() async {
+  final email = _emailController.text.trim();
+  final password = _passwordController.text.trim();
 
-  void _loginAsAdmin() async {
-    final email = _emailController.text.trim();
-    final password = _passwordController.text.trim();
+  if (email.isEmpty || password.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please enter email and password')),
+    );
+    return;
+  }
 
-    if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter email and password')),
-      );
-      return;
-    }
+  if (_selectedDepartment == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please select your department')),
+    );
+    return;
+  }
 
-    if (_selectedDepartment == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select your department')),
-      );
-      return;
-    }
+  setState(() => _isLoading = true);
 
-    setState(() => _isLoading = true);
+  try {
+    // Sign in with email and password
+    UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
 
-    // Simulate login process
-    await Future.delayed(const Duration(seconds: 1));
+    // Check if user has admin role
+    var userDoc = await _firestore.collection('users').doc(userCredential.user!.uid).get();
+    
+    if (userDoc.exists && userDoc['role'] == 'Admin') {
+      // FIX: Use displayName instead of name
+      await _firestore.collection('users').doc(userCredential.user!.uid).update({
+        'department': _selectedDepartment!.displayName, // ← FIXED THIS LINE
+      });
 
-    if (_adminCredentials[email] == password) {
-      // Successful login - pass the selected department to admin home screen
+      // Successful login - navigate to admin dashboard
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => AdminHomeScreen(selectedDepartment: _selectedDepartment),
+          builder: (context) => AdminHomeScreen(),
         ),
       );
     } else {
-      // Failed login
+      // User doesn't have admin role
+      await _auth.signOut();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid admin credentials')),
+        const SnackBar(content: Text('Access denied. Admin privileges required.')),
       );
     }
-
+  } on FirebaseAuthException catch (e) {
+    // ... error handling (keep this the same) ...
+  } catch (e) {
+    // ... error handling (keep this the same) ...
+  } finally {
     setState(() => _isLoading = false);
   }
-
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -256,7 +272,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                             ),
                       const SizedBox(height: 20),
 
-                      // Demo Credentials Hint
+                      // Demo Info
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -267,7 +283,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Demo Credentials:',
+                              'Note:',
                               style: GoogleFonts.poppins(
                                 fontWeight: FontWeight.w600,
                                 color: Colors.blue.shade800,
@@ -275,7 +291,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Email: admin@civiclink.com\nPassword: admin123',
+                              'Only users with Admin role can access this portal.',
                               style: GoogleFonts.poppins(
                                 fontSize: 12,
                                 color: Colors.blue.shade700,

@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'aadhaar_otp_screen.dart';
-import 'registration_screen.dart'; // Keep only one import
+import 'registration_screen.dart';
 import 'citizen_home_screen.dart';
+import 'admin_home_screen.dart';
+import 'worker_home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,9 +16,13 @@ class LoginScreen extends StatefulWidget {
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
+
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _showAnimatedText = true;
@@ -29,17 +37,98 @@ class _LoginScreenState extends State<LoginScreen> {
     Navigator.push(context, MaterialPageRoute(builder: (context) => RegistrationScreen()));
   }
 
-  void _loginWithEmail() async {
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(seconds: 2));
-    setState(() => _isLoading = false);
-    print("Email login: ${_emailController.text} as ${_selectedUserType}");
-    
-    // Navigate based on user type
-    if (_selectedUserType == 'Citizen') {
+  Future<void> _redirectBasedOnRole(String userId) async {
+    try {
+      // Get user document from Firestore
+      var userDoc = await _firestore.collection('users').doc(userId).get();
+      
+      if (userDoc.exists) {
+        String role = userDoc['role'];
+        
+        // Navigate based on role
+        if (role == 'Admin') {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => AdminHomeScreen()),
+          );
+        } else if (role == 'Worker') {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => WorkerHomeScreen()),
+          );
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => CitizenHomeScreen()),
+          );
+        }
+      } else {
+        // If user document doesn't exist, create one with default role
+        await _firestore.collection('users').doc(userId).set({
+          'email': _emailController.text,
+          'role': 'Citizen',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => CitizenHomeScreen()),
+        );
+      }
+    } catch (e) {
+      print('Error getting user role: $e');
+      // Fallback: redirect to citizen dashboard
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => CitizenHomeScreen()),
+      );
+    }
+  }
+
+  void _loginWithEmail() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      // Sign in with email and password
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+
+      // Redirect based on user role
+      await _redirectBasedOnRole(userCredential.user!.uid);
+      
+    } on FirebaseAuthException catch (e) {
+      setState(() => _isLoading = false);
+      
+      String errorMessage;
+      switch (e.code) {
+        case 'user-not-found':
+          errorMessage = 'No user found with this email.';
+          break;
+        case 'wrong-password':
+          errorMessage = 'Incorrect password.';
+          break;
+        case 'invalid-email':
+          errorMessage = 'Invalid email address.';
+          break;
+        default:
+          errorMessage = 'An error occurred. Please try again.';
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('An unexpected error occurred: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }

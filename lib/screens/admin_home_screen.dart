@@ -2,182 +2,41 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../models/department.dart';
-import '../services/firestore_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:civic_link/models/report_model.dart';
+import 'package:civic_link/screens/debug_screen.dart';
+import '../services/notification_service.dart';
 
 class AdminHomeScreen extends StatefulWidget {
-  final Department? selectedDepartment; 
-
-  const AdminHomeScreen({super.key, this.selectedDepartment});
+  const AdminHomeScreen({Key? key}) : super(key: key);
 
   @override
-  State<AdminHomeScreen> createState() => _AdminHomeScreenState();
+  _AdminHomeScreenState createState() => _AdminHomeScreenState();
 }
 
 class _AdminHomeScreenState extends State<AdminHomeScreen> {
-  int _currentTab = 0;
-  final FirestoreService _firestoreService = FirestoreService();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  int _currentIndex = 0;
+  String? _adminDepartment;
+  String? _adminId;
 
-  // This function now determines the department for auto-assignment.
-  Department _assignToDepartment(String issueType) {
-    switch (issueType.toLowerCase()) {
-      case 'pothole':
-      case 'road damage':
-      case 'road_crack':
-        return Department.roadsAndInfrastructure;
-      case 'garbage overflow':
-      case 'trash':
-      case 'waste':
-        return Department.sanitation;
-      case 'water pipeline leakage':
-      case 'water leak':
-      case 'drainage':
-        return Department.waterAndSewage;
-      case 'street light not working':
-      case 'light issue':
-        return Department.electricity;
-      case 'damaged public bench':
-      case 'public toilet issues':
-        return Department.publicWorks;
-      case 'illegal construction':
-        return Department.planningAndDevelopment;
-      default:
-        return Department.publicWorks;
-    }
+  @override
+  void initState() {
+    super.initState();
+    _adminId = _auth.currentUser?.uid;
+    _getAdminDepartment();
   }
 
-  // The new "AI" auto-assign logic that updates Firestore.
-  void _autoAssignWithAI() async {
-    // Show a loading indicator
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Assigning issues using AI...')),
-    );
-
-    // Get all unassigned issues from the database
-    final issues = await FirebaseFirestore.instance
-        .collection('issues')
-        .where('assigned', isEqualTo: false) // Assuming you have an 'assigned' field
-        .get();
-
-    // Loop through each unassigned issue
-    for (var doc in issues.docs) {
-      final issueData = doc.data() as Map<String, dynamic>;
-      final issueType = issueData['category'] as String? ?? 'Unknown';
-      
-      // Determine the department using our simple logic
-      final assignedDepartment = _assignToDepartment(issueType);
-
-      // Update the document in Firestore
-      await doc.reference.update({
-        'assigned': true,
-        'assignedDepartment': assignedDepartment.displayName,
-      });
+  Future<void> _getAdminDepartment() async {
+    if (_adminId != null) {
+      final userDoc = await _firestore.collection('users').doc(_adminId).get();
+      if (userDoc.exists) {
+        setState(() {
+          _adminDepartment = userDoc['department'];
+        });
+      }
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('AI assignment complete!')),
-    );
-  }
-
-
-  Widget _buildIssueCard(DocumentSnapshot doc) {
-    final issueData = doc.data() as Map<String, dynamic>;
-    final imageUrl = issueData['imageUrl'] as String?;
-    final issueType = issueData['category'] as String? ?? 'Unknown';
-    final description = issueData['description'] as String? ?? 'No description';
-    final location = issueData['location'] as Map<String, dynamic>?;
-    final createdAt = issueData['createdAt'] as Timestamp? ?? Timestamp.now();
-    final assignedDepartment = issueData['assignedDepartment'] as String? ?? 'Not Assigned';
-    final department = _assignToDepartment(issueType);
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (imageUrl != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  imageUrl,
-                  height: 150,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: department.color.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    '${department.emoji} ${department.displayName}',
-                    style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: department.color,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                // You can add your buttons and menu here later if needed
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              issueType,
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              description,
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.grey.shade600,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Feather.map_pin, size: 14, color: Colors.grey.shade500),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    location != null ? 'Lat: ${location['latitude']}, Lon: ${location['longitude']}' : 'Location not available',
-                    style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Icon(Feather.clock, size: 14, color: Colors.grey.shade500),
-                const SizedBox(width: 4),
-                Text(
-                  '${DateTime.now().difference(createdAt.toDate()).inMinutes} min ago',
-                  style: GoogleFonts.poppins(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   @override
@@ -185,59 +44,58 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.selectedDepartment != null
-              ? '${widget.selectedDepartment!.emoji} ${widget.selectedDepartment!.displayName} Dashboard'
-              : 'Admin Dashboard',
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.bold,
-          ),
+          _adminDepartment != null 
+            ? '$_adminDepartment Dashboard' 
+            : 'Admin Dashboard',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.blue.shade700,
         foregroundColor: Colors.white,
         actions: [
-          // The new "AI" button
-          TextButton(
-            onPressed: _autoAssignWithAI,
-            child: Text(
-              'Auto Assign with AI',
-              style: GoogleFonts.poppins(color: Colors.white),
-            ),
+          IconButton(
+            icon: const Icon(Feather.info),
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (context) => const DebugScreen()));
+            },
+            tooltip: 'Debug Information',
           ),
           IconButton(
-            icon: const Icon(Feather.bell),
-            onPressed: () {},
+            icon: const Icon(Feather.log_out),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+              Navigator.pushReplacementNamed(context, '/login');
+            },
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: _firestoreService.getAllIssues(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return Center(
-              child: Text(
-                'No issues found',
-                style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey.shade600),
+      body: DefaultTabController(
+        length: 3,
+        child: Column(
+          children: [
+            const TabBar(
+              tabs: [
+                Tab(text: 'Pending'),
+                Tab(text: 'Assigned'),
+                Tab(text: 'Resolved'),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _buildReportsList('Pending'),
+                  _buildReportsList('Assigned'),
+                  _buildReportsList('Resolved'),
+                ],
               ),
-            );
-          }
-
-          final issues = snapshot.data!.docs;
-          
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: issues.length,
-            itemBuilder: (context, index) {
-              return _buildIssueCard(issues[index]);
-            },
-          );
-        },
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentTab,
-        onTap: (index) => setState(() => _currentTab = index),
+        currentIndex: _currentIndex,
+        onTap: (index) => setState(() => _currentIndex = index),
+        selectedItemColor: Colors.blue.shade700,
+        unselectedItemColor: Colors.grey.shade600,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Feather.home),
@@ -255,4 +113,234 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       ),
     );
   }
+
+  Widget _buildReportsList(String status) {
+    // If admin has no department assigned, show all reports
+    Stream<QuerySnapshot> stream;
+    if (_adminDepartment == null || _adminDepartment!.isEmpty) {
+      stream = _firestore
+          .collection('reports')
+          .where('status', isEqualTo: status)
+          .snapshots();
+    } else {
+      stream = _firestore
+          .collection('reports')
+          .where('status', isEqualTo: status)
+          .where('department', isEqualTo: _adminDepartment)
+          .snapshots();
+    }
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: stream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return Center(
+            child: Text(
+              _adminDepartment == null || _adminDepartment!.isEmpty
+                ? 'No $status reports'
+                : 'No $status reports for $_adminDepartment department',
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: snapshot.data!.docs.length,
+          itemBuilder: (context, index) {
+            var doc = snapshot.data!.docs[index];
+            Report report = Report.fromMap(doc.data() as Map<String, dynamic>);
+            report.id = doc.id;
+            return _buildReportCard(report);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildReportCard(Report report) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (report.imageUrl.isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  report.imageUrl,
+                  height: 200,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              'Category: ${report.category}',
+              style: GoogleFonts.poppins(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Description: ${report.description}',
+              style: GoogleFonts.poppins(
+                color: Colors.grey.shade700,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Location: ${report.latitude.toStringAsFixed(4)}, ${report.longitude.toStringAsFixed(4)}',
+              style: GoogleFonts.poppins(
+                color: Colors.grey.shade700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Department: ${report.department ?? "Not assigned"}',
+              style: GoogleFonts.poppins(
+                color: Colors.grey.shade700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Status: ${report.status}',
+              style: GoogleFonts.poppins(
+                color: _getStatusColor(report.status),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (report.status == 'Pending')
+              ElevatedButton(
+                onPressed: () => _autoAssignReport(report),
+                child: Text(
+                  'Auto-Assign with AI',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade700,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Pending':
+        return Colors.orange;
+      case 'Assigned':
+        return Colors.blue;
+      case 'Resolved':
+        return Colors.green;
+      default:
+        return Colors.black;
+    }
+  }
+
+Future<void> _autoAssignReport(Report report) async {
+  try {
+    // Get all workers first
+    QuerySnapshot allWorkers = await _firestore
+        .collection('users')
+        .where('role', isEqualTo: 'Worker')
+        .get();
+
+    // Find the best matching worker based on department
+    var assignedWorker;
+    
+    // First try to find worker in same department
+    if (report.department != null && report.department!.isNotEmpty) {
+      for (var workerDoc in allWorkers.docs) {
+        var workerData = workerDoc.data() as Map<String, dynamic>;
+        String workerDept = (workerData['department'] ?? '').toString();
+        
+        if (workerDept == report.department) {
+          assignedWorker = workerDoc;
+          break;
+        }
+      }
+    }
+
+    // If no department match found, assign to any available worker
+    if (assignedWorker == null && allWorkers.docs.isNotEmpty) {
+      assignedWorker = allWorkers.docs.first;
+    }
+
+// Update this part in _autoAssignReport method:
+if (assignedWorker != null) {
+  var workerData = assignedWorker.data() as Map<String, dynamic>;
+  
+  // Update the report
+  await _firestore.collection('reports').doc(report.id).update({
+    'assignedTo': assignedWorker.id,
+    'status': "Assigned",
+    'assignedAt': FieldValue.serverTimestamp(),
+  });
+
+  // Send notification to citizen - ADD NULL CHECK
+  if (report.id != null) {
+    await NotificationService.sendAssignmentNotification(
+      reportId: report.id!, // Use ! to assert non-null
+      citizenUserId: report.userId,
+      category: report.category,
+      workerName: workerData['name'] ?? 'Municipal Worker',
+    );
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text('Successfully assigned to ${workerData['name']}'),
+      backgroundColor: Colors.green,
+      duration: const Duration(seconds: 3),
+    ),
+  );
+} else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No workers available for ${report.department} department'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Error assigning report: $e'),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+}
 }

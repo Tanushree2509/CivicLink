@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart';
-import 'report_issue_screen.dart'; // Add this import
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'report_issue_screen.dart';
+import '../models/report_model.dart';
+import 'dart:async';
+import 'notifications_screen.dart';
+import '../services/notification_service.dart';
 
 class CitizenHomeScreen extends StatefulWidget {
   const CitizenHomeScreen({super.key});
@@ -10,14 +16,17 @@ class CitizenHomeScreen extends StatefulWidget {
   State<CitizenHomeScreen> createState() => _CitizenHomeScreenState();
 }
 
-  
-  // ... rest of }
-
 class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
   int _currentIndex = 0;
-  int _notificationCount = 3; // Example notification count
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  List<Report> _userReports = [];
+  StreamSubscription<QuerySnapshot>? _reportsSubscription;
+  String? _currentUserId;
+  int _notificationCount = 0;
+  StreamSubscription<QuerySnapshot>? _notificationsSubscription;
 
-  // Better civic issue images with appropriate content
+  // Mock data for nearby reports (for demo purposes)
   final List<Map<String, dynamic>> _nearbyReports = [
     {
       'title': 'Pothole on Main Road',
@@ -39,37 +48,90 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
       'upvotes': 8,
       'comments': 3,
     },
-    {
-      'title': 'Street Light Not Working',
-      'description': 'Light pole not functioning after dark, safety concern',
-      'distance': '1.2 km away',
-      'status': 'Resolved',
-      'image': 'https://images.unsplash.com/photo-1515488768410-1281acbda349?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1176&q=80',
-      'date': '1 day ago',
-      'upvotes': 15,
-      'comments': 7,
-    },
-    {
-      'title': 'Water Pipeline Leakage',
-      'description': 'Water wastage due to broken pipeline on roadside',
-      'distance': '0.3 km away',
-      'status': 'In Progress',
-      'image': 'https://images.unsplash.com/photo-1626388126165-5e21c4c12e50?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1170&q=80',
-      'date': '3 hours ago',
-      'upvotes': 20,
-      'comments': 9,
-    },
-    {
-      'title': 'Damaged Public Bench',
-      'description': 'Park bench broken and needs repair for public use',
-      'distance': '0.9 km away',
-      'status': 'Reported',
-      'image': 'https://images.unsplash.com/photo-1576788260953-7fd987814021?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1170&q=80',
-      'date': '6 hours ago',
-      'upvotes': 6,
-      'comments': 2,
-    },
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUserId = _auth.currentUser?.uid;
+    _loadUserReports();
+    _loadNotifications();
+  }
+
+  @override
+  void dispose() {
+    _reportsSubscription?.cancel();
+    _notificationsSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadUserReports() async {
+    if (_currentUserId != null) {
+      try {
+        _reportsSubscription = _firestore
+            .collection('reports')
+            .where('userId', isEqualTo: _currentUserId)
+            .orderBy('timestamp', descending: true)
+            .snapshots()
+            .listen((snapshot) {
+          if (mounted) {
+            setState(() {
+              _userReports = snapshot.docs.map((doc) {
+                var data = doc.data() as Map<String, dynamic>;
+                return Report(
+                  id: doc.id,
+                  userId: data['userId'],
+                  category: data['category'],
+                  description: data['description'],
+                  imageUrl: data['imageUrl'],
+                  latitude: data['latitude'],
+                  longitude: data['longitude'],
+                  status: data['status'],
+                  timestamp: data['timestamp'].toDate(),
+                  assignedTo: data['assignedTo'],
+                  department: data['department'],
+                  resolvedAt: data['resolvedAt']?.toDate(),
+                );
+              }).toList();
+            });
+          }
+        }, onError: (error) {
+          print('Error loading reports: $error');
+        });
+      } catch (e) {
+        print('Error setting up reports listener: $e');
+      }
+    }
+  }
+
+  Future<void> _loadNotifications() async {
+    if (_currentUserId != null) {
+      try {
+        _notificationsSubscription = _firestore
+            .collection('notifications')
+            .where('userId', isEqualTo: _currentUserId)
+            .where('read', isEqualTo: false)
+            .snapshots()
+            .listen((snapshot) {
+          if (mounted) {
+            setState(() {
+              _notificationCount = snapshot.docs.length;
+            });
+          }
+        }, onError: (error) {
+          print('Error loading notifications: $error');
+        });
+      } catch (e) {
+        print('Error setting up notifications listener: $e');
+      }
+    }
+  }
+
+  Future<void> _refreshReports() async {
+    // Cancel existing subscription and reload
+    _reportsSubscription?.cancel();
+    await _loadUserReports();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -84,41 +146,55 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
         backgroundColor: Colors.blue.shade700,
         foregroundColor: Colors.white,
         actions: [
-          // Notification Icon with badge
-          Stack(
-            children: [
-              IconButton(
-                icon: const Icon(Feather.bell),
-                onPressed: () {
-                  _showNotifications();
-                },
-              ),
-              if (_notificationCount > 0)
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 16,
-                      minHeight: 16,
-                    ),
-                    child: Text(
-                      _notificationCount.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
+          // Real notifications badge
+          StreamBuilder<QuerySnapshot>(
+            stream: _firestore
+                .collection('notifications')
+                .where('userId', isEqualTo: _currentUserId)
+                .where('read', isEqualTo: false)
+                .snapshots(),
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data?.docs.length ?? 0;
+              
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Feather.bell),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => NotificationsScreen()),
+                      );
+                    },
                   ),
-                ),
-            ],
+                  if (unreadCount > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          unreadCount.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Feather.map),
@@ -129,6 +205,19 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
         ],
       ),
       body: _buildCurrentScreen(),
+      floatingActionButton: _currentIndex == 0
+          ? FloatingActionButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ReportIssueScreen()),
+                );
+              },
+              backgroundColor: Colors.blue.shade700,
+              foregroundColor: Colors.white,
+              child: const Icon(Feather.plus),
+            )
+          : null,
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
@@ -172,7 +261,6 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
   Widget _buildHomeScreen() {
     return Column(
       children: [
-        // Header with welcome message
         Container(
           padding: const EdgeInsets.all(16),
           color: Colors.blue.shade50,
@@ -195,13 +283,18 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
                         color: Colors.grey.shade600,
                       ),
                     ),
-                    Text(
-                      'Citizen User!',
-                      style: GoogleFonts.poppins(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue.shade800,
-                      ),
+                    FutureBuilder(
+                      future: _getUserName(),
+                      builder: (context, snapshot) {
+                        return Text(
+                          snapshot.data ?? 'Citizen User!',
+                          style: GoogleFonts.poppins(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade800,
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -216,21 +309,79 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
           ),
         ),
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
+          child: DefaultTabController(
+            length: 2,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Nearby Reports',
-                  style: GoogleFonts.poppins(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade800,
+                const TabBar(
+                  tabs: [
+                    Tab(text: 'My Reports'),
+                    Tab(text: 'Nearby Issues'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      // My Reports Tab
+                      RefreshIndicator(
+                        onRefresh: _refreshReports,
+                        child: _userReports.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Feather.file_text,
+                                      size: 64,
+                                      color: Colors.grey.shade400,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No reports yet',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 18,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Report your first civic issue!',
+                                      style: GoogleFonts.poppins(
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    ElevatedButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _currentIndex = 1; // Switch to Report tab
+                                        });
+                                      },
+                                      child: const Text('Report Issue'),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.builder(
+                                padding: const EdgeInsets.all(16.0),
+                                itemCount: _userReports.length,
+                                itemBuilder: (context, index) {
+                                  return _buildReportCard(_userReports[index]);
+                                },
+                              ),
+                      ),
+
+                      // Nearby Issues Tab
+                      ListView.builder(
+                        padding: const EdgeInsets.all(16.0),
+                        itemCount: _nearbyReports.length,
+                        itemBuilder: (context, index) {
+                          return _buildMockReportCard(_nearbyReports[index]);
+                        },
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                ..._nearbyReports.map((report) => _buildReportCard(report)).toList(),
               ],
             ),
           ),
@@ -239,7 +390,171 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
     );
   }
 
-  Widget _buildReportCard(Map<String, dynamic> report) {
+  Future<String> _getUserName() async {
+    User? user = _auth.currentUser;
+    if (user != null) {
+      try {
+        var userDoc = await _firestore.collection('users').doc(user.uid).get();
+        return userDoc['name'] ?? 'Citizen User';
+      } catch (e) {
+        return 'Citizen User';
+      }
+    }
+    return 'Citizen User';
+  }
+
+  Widget _buildReportCard(Report report) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      elevation: 3,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Use conditional rendering with ternary operator
+          report.imageUrl.isNotEmpty
+              ? ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                  child: Image.network(
+                    report.imageUrl,
+                    height: 180,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Container(
+                        height: 180,
+                        color: Colors.grey.shade200,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            value: loadingProgress.expectedTotalBytes != null
+                                ? loadingProgress.cumulativeBytesLoaded /
+                                    loadingProgress.expectedTotalBytes!
+                                : null,
+                          ),
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        height: 180,
+                        color: Colors.grey.shade200,
+                        child: const Icon(Feather.image, size: 48, color: Colors.grey),
+                      );
+                    },
+                  ),
+                )
+              : const SizedBox.shrink(), // Empty widget if no image
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        report.category.toUpperCase(),
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getStatusColor(report.status),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        report.status,
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (report.department != null)
+                  Text(
+                    'Department: ${report.department}',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  report.description,
+                  style: GoogleFonts.poppins(
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Reported ${_formatDate(report.timestamp)}',
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+                if (report.assignedTo != null) const SizedBox(height: 8),
+                if (report.assignedTo != null)
+                  FutureBuilder(
+                    future: _getWorkerName(report.assignedTo!),
+                    builder: (context, snapshot) {
+                      return Row(
+                        children: [
+                          Icon(
+                            Feather.user,
+                            size: 14,
+                            color: Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Assigned to: ${snapshot.data ?? 'Worker'}',
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              color: Colors.blue.shade700,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                if (report.resolvedAt != null) const SizedBox(height: 8),
+                if (report.resolvedAt != null)
+                  Text(
+                    'Resolved: ${_formatDate(report.resolvedAt!)}',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMockReportCard(Map<String, dynamic> report) {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(
@@ -367,69 +682,74 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'Reported':
+      case 'Pending':
         return Colors.orange;
-      case 'In Progress':
+      case 'Assigned':
         return Colors.blue;
+      case 'In Progress':
+        return Colors.blue.shade600;
       case 'Resolved':
         return Colors.green;
+      case 'Reported':
+        return Colors.orange;
       default:
         return Colors.grey;
     }
   }
 
-Widget _buildReportScreen() {
-  return Center(
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Feather.camera,
-          size: 64,
-          color: Colors.blue.shade700,
-        ),
-        const SizedBox(height: 16),
-        Text(
-          'Report an Issue',
-          style: GoogleFonts.poppins(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
+  Widget _buildReportScreen() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Feather.camera,
+            size: 64,
+            color: Colors.blue.shade700,
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Take a photo of the civic issue to report it',
-          style: GoogleFonts.poppins(
-            color: Colors.grey.shade600,
-          ),
-        ),
-        const SizedBox(height: 24),
-        ElevatedButton(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => ReportIssueScreen()),
-            );
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue.shade700,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          child: Text(
-            'Report Issue',
+          const SizedBox(height: 16),
+          Text(
+            'Report an Issue',
             style: GoogleFonts.poppins(
-              fontWeight: FontWeight.w600,
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
             ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+          const SizedBox(height: 8),
+          Text(
+            'Take a photo of the civic issue to report it',
+            style: GoogleFonts.poppins(
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ReportIssueScreen()),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade700,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Text(
+              'Report Issue',
+              style: GoogleFonts.poppins(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildProfileScreen() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -449,24 +769,34 @@ Widget _buildReportScreen() {
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            'user@example.com',
-            style: GoogleFonts.poppins(
-              color: Colors.grey.shade600,
-            ),
+          FutureBuilder(
+            future: _getUserEmail(),
+            builder: (context, snapshot) {
+              return Text(
+                snapshot.data ?? 'user@example.com',
+                style: GoogleFonts.poppins(
+                  color: Colors.grey.shade600,
+                ),
+              );
+            },
           ),
           const SizedBox(height: 24),
           _buildProfileButton('Edit Profile', Feather.edit),
           _buildProfileButton('My Reports', Feather.file_text),
           _buildProfileButton('Settings', Feather.settings),
           _buildProfileButton('Help & Support', Feather.help_circle),
-          _buildProfileButton('Logout', Feather.log_out),
+          _buildProfileButton('Logout', Feather.log_out, onTap: _logout),
         ],
       ),
     );
   }
 
-  Widget _buildProfileButton(String text, IconData icon) {
+  Future<String> _getUserEmail() async {
+    User? user = _auth.currentUser;
+    return user?.email ?? 'user@example.com';
+  }
+
+  Widget _buildProfileButton(String text, IconData icon, {VoidCallback? onTap}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
@@ -478,9 +808,7 @@ Widget _buildReportScreen() {
           ),
         ),
         trailing: const Icon(Feather.chevron_right),
-        onTap: () {
-          // Handle button tap
-        },
+        onTap: onTap,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
         ),
@@ -489,59 +817,32 @@ Widget _buildReportScreen() {
     );
   }
 
-  void _showNotifications() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Notifications',
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildNotificationItem('Your report #1234 is now In Progress'),
-            _buildNotificationItem('New issue reported near your location'),
-            _buildNotificationItem('Welcome to CivicLink! Start reporting issues'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _notificationCount = 0;
-              });
-            },
-            child: const Text('Mark all as read'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
+  void _logout() async {
+    await _auth.signOut();
+    Navigator.pushReplacementNamed(context, '/login');
   }
 
-  Widget _buildNotificationItem(String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        children: [
-          Icon(Feather.info, size: 16, color: Colors.blue.shade700),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              style: GoogleFonts.poppins(fontSize: 14),
-            ),
-          ),
-        ],
-      ),
-    );
+  Future<String> _getWorkerName(String workerId) async {
+    try {
+      var workerDoc = await _firestore.collection('users').doc(workerId).get();
+      return workerDoc['name'] ?? 'Municipal Worker';
+    } catch (e) {
+      return 'Municipal Worker';
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final difference = now.difference(date);
+
+    if (difference.inDays > 0) {
+      return '${difference.inDays} days ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours} hours ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes} minutes ago';
+    } else {
+      return 'Just now';
+    }
   }
 }
